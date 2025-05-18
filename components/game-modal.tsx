@@ -1,9 +1,10 @@
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Calendar, Clock, ExternalLink, Users, Gamepad, Star, Flame, Trophy } from "lucide-react"
+import { Calendar, Clock, ExternalLink, Users, Gamepad, Star, Flame, Trophy, Sparkles, Loader2 } from "lucide-react"
 import Image from "next/image"
 import type { Game } from "@/lib/types"
+import { useState, useEffect } from "react"
 
 interface GameModalProps {
   game: Game | null
@@ -12,6 +13,18 @@ interface GameModalProps {
 }
 
 export function GameModal({ game, isOpen, onClose }: GameModalProps) {
+  const [enhancedDescription, setEnhancedDescription] = useState<string | null>(null)
+  const [isEnhancing, setIsEnhancing] = useState(false)
+  const [enhanceError, setEnhanceError] = useState<string | null>(null)
+
+  // Reset enhanced description whenever the game changes
+  useEffect(() => {
+    // Reset state when a new game modal is opened
+    setEnhancedDescription(null)
+    setIsEnhancing(false)
+    setEnhanceError(null)
+  }, [game?.id]) // Only run when the game ID changes
+
   if (!game) return null
 
   // Format date function
@@ -19,6 +32,52 @@ export function GameModal({ game, isOpen, onClose }: GameModalProps) {
     if (!dateString) return "Unknown"
     const date = new Date(dateString)
     return date.toLocaleDateString()
+  }
+
+  // Generate enhanced description function
+  const generateEnhancedDescription = async () => {
+    if (!game) return
+    
+    setIsEnhancing(true)
+    setEnhanceError(null)
+    
+    try {
+      const response = await fetch("http://localhost:8000/api/enhance-description", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: String(game.id), // Convert ID to string here for the actual request
+          name: game.name,
+          genre: game.genre_l1 || game.genre || "",
+          subgenre: game.genre_l2 || "",
+          description: game.description,
+          enhance_description: true
+        }),
+      })
+
+      console.log("Request to enhance-description API:", JSON.stringify({
+        id: String(game.id),
+        name: game.name,
+        genre: game.genre_l1 || game.genre || "",
+        subgenre: game.genre_l2 || "",
+        description: game.description,
+        enhance_description: true
+      }));
+      
+      if (!response.ok) {
+        throw new Error(`Failed to enhance description: ${response.status}`)
+      }
+      
+      const data = await response.json()
+      setEnhancedDescription(data.enhanced)
+    } catch (error) {
+      console.error("Error enhancing description:", error)
+      setEnhanceError("Failed to generate AI insights. Please try again later.")
+    } finally {
+      setIsEnhancing(false)
+    }
   }
 
   // Determine genres to display
@@ -85,10 +144,70 @@ export function GameModal({ game, isOpen, onClose }: GameModalProps) {
             </div>
           </div>
 
-          {/* Game description */}
+          {/* Game description with AI enhance button */}
           <div className="bg-[#3a0099]/50 p-6 rounded-xl">
-            <h3 className="text-xl font-bold mb-4 text-white">About This Game</h3>
-            <p className="text-purple-200 whitespace-pre-line">{game.description}</p>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-white">About This Game</h3>
+              {!enhancedDescription && !isEnhancing && (
+                <Button 
+                  onClick={generateEnhancedDescription} 
+                  className="bg-purple-700 hover:bg-purple-600 text-white"
+                  size="sm"
+                >
+                  <Sparkles className="h-4 w-4 mr-2 text-yellow-300" />
+                  Enhance Description with AI
+                </Button>
+              )}
+            </div>
+            
+            {/* Original description */}
+            {!enhancedDescription && !isEnhancing && !enhanceError && (
+              <p className="text-purple-200 whitespace-pre-line">{game.description}</p>
+            )}
+            
+            {/* Loading state */}
+            {isEnhancing && (
+              <div className="py-8 flex flex-col items-center justify-center">
+                <Loader2 className="h-8 w-8 animate-spin text-purple-400 mb-4" />
+                <p className="text-purple-200">Generating AI insights...</p>
+                <p className="text-purple-300 text-sm mt-2">This may take a few seconds</p>
+              </div>
+            )}
+            
+            {/* Error state */}
+            {enhanceError && (
+              <div className="bg-red-900/30 border border-red-700 p-4 rounded-lg">
+                <p className="text-red-200">{enhanceError}</p>
+                <Button 
+                  onClick={generateEnhancedDescription} 
+                  className="mt-3 bg-red-900 hover:bg-red-800 text-white"
+                  size="sm"
+                >
+                  Try Again
+                </Button>
+              </div>
+            )}
+            
+            {/* Enhanced description */}
+            {enhancedDescription && (
+              <div>
+                <div className="flex items-center mb-4 border-b border-purple-800 pb-2">
+                  <Sparkles className="h-5 w-5 mr-2 text-yellow-300" />
+                  <h4 className="text-lg font-medium text-white">AI Enhanced Insights</h4>
+                </div>
+                <p className="text-purple-200 whitespace-pre-line">{enhancedDescription}</p>
+                <div className="mt-6 flex justify-end">
+                  <Button 
+                    onClick={() => setEnhancedDescription(null)} 
+                    variant="ghost" 
+                    className="text-purple-300 hover:text-white"
+                    size="sm"
+                  >
+                    View Original Description
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Game details */}

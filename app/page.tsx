@@ -3,14 +3,42 @@ import { GameResults } from "@/components/game-results"
 import { Pagination } from "@/components/pagination"
 import { FeaturedGames } from "@/components/featured-games"
 import { Categories } from "@/components/categories"
+import { Filters } from "@/components/filters"
 import { searchGames } from "@/lib/search-action"
 import { Suspense } from "react"
 import { Gamepad2, Sparkles, Search, Trophy, CheckCircle2, List } from "lucide-react"
 
+// Add a new function to fetch aggregations
+async function fetchAggregations() {
+  try {
+    const response = await fetch("http://localhost:8000/api/aggregations", {
+      cache: "no-store",
+    });
+    
+    if (!response.ok) {
+      console.error("Failed to fetch aggregations");
+      return null;
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error("Error fetching aggregations:", error);
+    return null;
+  }
+}
+
 export default async function Home({
   searchParams,
 }: {
-  searchParams: { query?: string; page?: string; enhance?: string }
+  searchParams: { 
+    query?: string; 
+    page?: string; 
+    enhance?: string; 
+    creators?: string; 
+    players?: string;
+    genre_l1?: string; // Update to genre_l1
+    genre_l2?: string; // Add genre_l2
+  }
 }) {
   const query = searchParams.query || ""
   const page = Number.parseInt(searchParams.page || "1", 10)
@@ -20,9 +48,39 @@ export default async function Home({
 
   console.log(`Search with query: ${query}, page: ${page}, enhance: ${enhance}`)
 
-  // Pass the enhance parameter to the searchGames function
+  // Parse creators from URL parameters
+  const creatorsParam = searchParams.creators;
+  const creators = creatorsParam?.split(",").filter(c => c.trim() !== "") || [];
+
+  console.log("Extracted creators from URL:", creators);
+
+  // Parse genres from URL parameters - now using genre_l1 and genre_l2
+  const genresL1Param = searchParams.genre_l1;
+  const genresL1 = genresL1Param?.split(",").filter(g => g.trim() !== "") || [];
+  
+  const genresL2Param = searchParams.genre_l2;
+  const genresL2 = genresL2Param?.split(",").filter(g => g.trim() !== "") || [];
+
+  const playerRange = searchParams.players || "";
+
+  // Fetch aggregations
+  const aggregations = await fetchAggregations();
+
+  // Pass the enhance parameter and filters to the searchGames function
   const { results, total, currentPage, totalPages, suggestions, llmAnalysis } = query
-    ? await searchGames(query, pageSize, page, maxPages, enhance)
+    ? await searchGames(
+        query, 
+        pageSize, 
+        page, 
+        maxPages, 
+        enhance, 
+        { 
+          creators: creators, 
+          genre_l1: genresL1, // Changed from genres to genre_l1
+          genre_l2: genresL2, // Added genre_l2
+          playerRange: playerRange 
+        }
+      )
     : { results: [], total: 0, currentPage: 1, totalPages: 0, suggestions: [], llmAnalysis: null }
 
   // Handle rendering the LLM analysis properly
@@ -176,11 +234,28 @@ export default async function Home({
                 )}
               </div>
 
-              <Suspense fallback={<div className="text-center py-12">Loading results...</div>}>
-                <GameResults results={results} />
-              </Suspense>
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                {/* Filters column */}
+                <div className="lg:col-span-1">
+                  {aggregations && (
+                    <Filters 
+                      creators={aggregations.creators.buckets} 
+                      playerRanges={aggregations.max_players.buckets}
+                      genres={aggregations.genre_l1.buckets} // Changed from genres to genre_l1
+                      subgenres={aggregations.genre_l2.buckets} // Added genre_l2
+                    />
+                  )}
+                </div>
+                
+                {/* Results column */}
+                <div className="lg:col-span-3">
+                  <Suspense fallback={<div className="text-center py-12">Loading results...</div>}>
+                    <GameResults results={results} />
+                  </Suspense>
 
-              {total > 0 && <Pagination currentPage={currentPage} maxPages={10} />}
+                  {total > 0 && <Pagination currentPage={currentPage} maxPages={10} />}
+                </div>
+              </div>
             </div>
           ) : (
             // Homepage view when no search is performed

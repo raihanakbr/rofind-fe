@@ -17,26 +17,37 @@ interface SearchResponse {
       }
     }>
   }
-  llm_enhancements?: {
+  llm_enhancements?: {    
     alternative_queries?: string[]
     ranking?: number[]
-    analysis?: string
+    analysis?: string | {
+      top_game?: string
+      features?: any[]
+      conclusion?: string
+    }
   }
 }
 
+// Update the function signature to include genre_l1 and genre_l2 in filters
 export async function searchGames(
   query: string,
   pageSize = 21,
   page = 1,
   maxPages = 10,
-  useLLM = false, // New parameter to enable LLM enhancement
+  useLLM = false,
+  filters?: { 
+    creators?: string[]; 
+    playerRange?: string;
+    genre_l1?: string[]; // Changed from genres to genre_l1
+    genre_l2?: string[]; // Added genre_l2
+  }
 ): Promise<{ 
   results: Game[]; 
   total: number; 
   currentPage: number; 
   totalPages: number;
-  suggestions?: string[]; // New return field for query suggestions
-  llmAnalysis?: string; // Optional analysis from LLM
+  suggestions?: string[];
+  llmAnalysis?: string | any;
 }> {
   try {
     // If no query, return empty results
@@ -47,20 +58,61 @@ export async function searchGames(
     // Ensure page is within bounds
     const validPage = Math.min(Math.max(1, page), maxPages)
 
-    // Make API request to backend
+    // Set up timeout for LLM-enhanced searches
+    const controller = new AbortController();
+    const timeoutId = useLLM ? 
+      setTimeout(() => controller.abort(), 15000) : // 15 second timeout for LLM
+      null;
+
+    console.log(`Searching with LLM enhancement: ${useLLM ? 'YES' : 'NO'}`);
+    console.log(`Applying filters:`, filters);
+
+    // Create the request body with filters
+    const requestBody: any = {
+      query: query,
+      page_size: pageSize,
+      page: validPage,
+      use_llm: useLLM,
+    };
+    
+    // Add filters if they exist - make sure to format them correctly for your API
+    if (filters) {
+      requestBody.filters = {};
+      
+      // Add creator filters if any are selected
+      if (filters.creators && filters.creators.length > 0) {
+        requestBody.filters.creators = filters.creators;
+      }
+      
+      // Add genre_l1 filters if any are selected
+      if (filters.genre_l1 && filters.genre_l1.length > 0) {
+        requestBody.filters.genre_l1 = filters.genre_l1;
+      }
+      
+      // Add genre_l2 filters if any are selected
+      if (filters.genre_l2 && filters.genre_l2.length > 0) {
+        requestBody.filters.genre_l2 = filters.genre_l2;
+      }
+      
+      // Add player range filter if selected
+      if (filters.playerRange) {
+        requestBody.filters.max_players = filters.playerRange;
+      }
+    }
+
+    // Make API request to backend with the structured request body
     const response = await fetch("http://localhost:8000/api/search", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        query: query,
-        page_size: pageSize,
-        page: validPage,
-        use_llm: useLLM, // Add the LLM flag to the request
-      }),
+      body: JSON.stringify(requestBody),
       cache: "no-store",
+      signal: useLLM ? controller.signal : undefined
     })
+
+    // Clear timeout if it exists
+    if (timeoutId) clearTimeout(timeoutId);
 
     if (!response.ok) {
       console.error("API error:", response.status, response.statusText)
@@ -68,6 +120,8 @@ export async function searchGames(
     }
 
     const data: SearchResponse = await response.json()
+    
+    console.log("Search response received, has filters:", !!requestBody.filters);
     
     // Extract LLM enhancements if available
     const suggestions = data.llm_enhancements?.alternative_queries || []
@@ -93,7 +147,7 @@ export async function searchGames(
         formattedName: formattedName, // Store the highlighted name
         description: source.description,
         creator: source.creator,
-        imageUrl: source.imageUrl, // Use the new imageUrl field
+        imageUrl: source.imageUrl,
         playing: source.playing,
         visits: source.visits,
         maxPlayers: source.maxPlayers,
@@ -113,11 +167,6 @@ export async function searchGames(
     const total = data.hits.total.value
     const totalPages = Math.min(Math.ceil(total / pageSize), maxPages)
 
-    // If we have suggestions, persist them to localStorage for client-side access
-    if (typeof window !== 'undefined' && suggestions.length > 0) {
-      localStorage.setItem('querysuggestions', JSON.stringify(suggestions))
-    }
-
     return {
       results,
       total,
@@ -128,6 +177,13 @@ export async function searchGames(
     }
   } catch (error) {
     console.error("Error searching games:", error)
+    
+    // If it was aborted due to timeout and LLM was enabled, retry without LLM
+    if (error.name === 'AbortError' && useLLM) {
+      console.log("LLM enhancement timed out, retrying without LLM");
+      return searchGames(query, pageSize, page, maxPages, false, filters);
+    }
+    
     return { results: [], total: 0, currentPage: page, totalPages: 0 }
   }
 }
